@@ -4,13 +4,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	extapi "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
-	//"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
 	"github.com/jetstack/cert-manager/pkg/acme/webhook/apis/acme/v1alpha1"
 	"github.com/jetstack/cert-manager/pkg/acme/webhook/cmd"
+	"github.com/jetstack/cert-manager/pkg/issuer/acme/dns/util"
+	"github.com/namedotcom/go/namecom"
 )
 
 var GroupName = os.Getenv("GROUP_NAME")
@@ -41,7 +44,8 @@ type customDNSProviderSolver struct {
 	// 3. uncomment the relevant code in the Initialize method below
 	// 4. ensure your webhook's service account has the required RBAC role
 	//    assigned to it for interacting with the Kubernetes APIs you need.
-	//client kubernetes.Clientset
+	client   *kubernetes.Clientset
+	recordId int32
 }
 
 // customDNSProviderConfig is a structure that is used to decode into when
@@ -64,8 +68,8 @@ type customDNSProviderConfig struct {
 	// These fields will be set by users in the
 	// `issuer.spec.acme.dns01.providers.webhook.config` field.
 
-	//Email           string `json:"email"`
-	//APIKeySecretRef v1alpha1.SecretKeySelector `json:"apiKeySecretRef"`
+	Username string `json:"username"`
+	Token    string `json:"apiToken"`
 }
 
 // Name is used as the name for this DNS solver when referencing it on the ACME
@@ -84,15 +88,33 @@ func (c *customDNSProviderSolver) Name() string {
 // cert-manager itself will later perform a self check to ensure that the
 // solver has correctly configured the DNS provider.
 func (c *customDNSProviderSolver) Present(ch *v1alpha1.ChallengeRequest) error {
+	domainName := extractDomainName(ch.ResolvedZone)
+
 	cfg, err := loadConfig(ch.Config)
 	if err != nil {
 		return err
 	}
 
-	// TODO: do something more useful with the decoded configuration
-	fmt.Printf("Decoded configuration %v", cfg)
+	nc := namecom.New(cfg.Username, cfg.Token)
+	hello, err := nc.HelloFunc(&namecom.HelloRequest{})
+	if err != nil {
+		return err
+	}
+	fmt.Print(hello.Motd, "\n")
 
-	// TODO: add code that sets a record in the DNS provider's console
+	fmt.Printf("Presenting record for %s (%s)\n", ch.ResolvedFQDN, domainName)
+
+	response, err := nc.CreateRecord(&namecom.Record{
+		DomainName: domainName,
+		Host:       extractRecordName(ch.ResolvedFQDN, ch.ResolvedZone),
+		Type:       "TXT",
+		TTL:        300,
+		Answer:     ch.Key,
+	})
+	if err != nil && strings.Contains(err.Error(), "record already exists") {
+		return nil
+	}
+	c.recordId = response.ID
 	return nil
 }
 
@@ -103,7 +125,30 @@ func (c *customDNSProviderSolver) Present(ch *v1alpha1.ChallengeRequest) error {
 // This is in order to facilitate multiple DNS validations for the same domain
 // concurrently.
 func (c *customDNSProviderSolver) CleanUp(ch *v1alpha1.ChallengeRequest) error {
-	// TODO: add code that deletes a record from the DNS provider's console
+	domainName := extractDomainName(ch.ResolvedZone)
+
+	cfg, err := loadConfig(ch.Config)
+	if err != nil {
+		return err
+	}
+
+	nc := namecom.New(cfg.Username, cfg.Token)
+	hello, err := nc.HelloFunc(&namecom.HelloRequest{})
+	if err != nil {
+		return err
+	}
+	fmt.Print(hello.Motd, "\n")
+
+	fmt.Printf("Cleaning up record for %s (%s)", ch.ResolvedFQDN, domainName)
+
+	empty, err := nc.DeleteRecord(&namecom.DeleteRecordRequest{
+		DomainName: domainName,
+		ID:         c.recordId,
+	})
+	if err != nil {
+		return err
+	}
+	_ = empty
 	return nil
 }
 
@@ -117,17 +162,13 @@ func (c *customDNSProviderSolver) CleanUp(ch *v1alpha1.ChallengeRequest) error {
 // The stopCh can be used to handle early termination of the webhook, in cases
 // where a SIGTERM or similar signal is sent to the webhook process.
 func (c *customDNSProviderSolver) Initialize(kubeClientConfig *rest.Config, stopCh <-chan struct{}) error {
-	///// UNCOMMENT THE BELOW CODE TO MAKE A KUBERNETES CLIENTSET AVAILABLE TO
-	///// YOUR CUSTOM DNS PROVIDER
+	cl, err := kubernetes.NewForConfig(kubeClientConfig)
+	if err != nil {
+		return err
+	}
 
-	//cl, err := kubernetes.NewForConfig(kubeClientConfig)
-	//if err != nil {
-	//	return err
-	//}
-	//
-	//c.client = cl
+	c.client = cl
 
-	///// END OF CODE TO MAKE KUBERNETES CLIENTSET AVAILABLE
 	return nil
 }
 
@@ -144,4 +185,21 @@ func loadConfig(cfgJSON *extapi.JSON) (customDNSProviderConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+func extractRecordName(fqdn, domain string) string {
+	name := util.UnFqdn(fqdn)
+	if idx := strings.Index(name, "."+util.UnFqdn(domain)); idx != -1 {
+		return name[:idx]
+	}
+	return name
+}
+
+func extractDomainName(zone string) string {
+	authZone, err := util.FindZoneByFqdn(zone, util.RecursiveNameservers)
+	if err != nil {
+		fmt.Printf("could not get zone by fqdn %v", err)
+		return zone
+	}
+	return util.UnFqdn(authZone)
 }
