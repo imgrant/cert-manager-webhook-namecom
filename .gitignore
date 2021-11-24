@@ -12,7 +12,11 @@
 *.out
 
 # Ignore the built binary
-cert-manager-webhook-example
+cert-manager-webhook-namecom
+
+# Ignore actual test data files with sensitive information
+testdata/namedotcom/config.json
+testdata/namedotcom/namedotcom-credentials.y*ml
 
 # Make artifacts
 _out
