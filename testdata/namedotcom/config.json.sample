@@ -1,0 +1,7 @@
+{
+  "username": "<Name.com username>",
+  "apiTokenSecretRef": {
+    "Name": "namedotcom-credentials",
+    "Key": "api-token"
+  }
+}
