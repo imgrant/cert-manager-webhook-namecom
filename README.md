@@ -1,3 +1,5 @@
+[![Docker Image CI](https://github.com/imgrant/cert-manager-webhook-namecom/actions/workflows/docker-image.yml/badge.svg)](https://github.com/imgrant/cert-manager-webhook-namecom/actions/workflows/docker-image.yml)
+
 # Kubernetes Cert Manager Webhook for Name.com
 
 Cert Manager Webhook for Name.com is an [ACME webhook solver](https://cert-manager.io/docs/configuration/acme/dns01/webhook/) for [cert-manager](https://cert-manager.io/) that enables the use of DNS01 challenges with [Name.com](https://name.com/) as the DNS provider, via the [Name.com API](https://www.name.com/api-docs).
